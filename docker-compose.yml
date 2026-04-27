@@ -1,0 +1,7 @@
+services:
+  data-diff:
+    build: .
+    volumes:
+      - ./Data:/app/Data
+    environment:
+      - PYTHONUNBUFFERED=1
