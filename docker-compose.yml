@@ -5,3 +5,4 @@ services:
       - ./Data:/app/Data
     environment:
       - PYTHONUNBUFFERED=1
+    command: ${COMANDO:-diff}
