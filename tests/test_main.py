@@ -6,6 +6,7 @@ import pandas as pd
 import pytest
 
 from src.main import (
+    LIBRETTO_PATTERN,
     AlfrescoSizeResult,
     _fmt_bytes,
     analyze_alfresco_to_s3_with_size,
@@ -149,6 +150,32 @@ def test_analyze_s3_with_size_libretto_case_insensitive(tmp_path):
     _, _, size_libretto = analyze_s3_with_size([chunk_path], set(), 2)
 
     assert size_libretto == pytest.approx(5000.0)
+
+
+def test_analyze_s3_with_size_libretti(tmp_path):
+    """'libretti' (plural) must also be matched by the pattern."""
+    s3_rows = [
+        {"NomeFile": "a.pdf", "Path": "/Libretti/a.pdf", "Dimensione": "3000", "Data": ""},
+        {"NomeFile": "b.pdf", "Path": "/LIBRETTI/sub/b.pdf", "Dimensione": "2000", "Data": ""},
+        {"NomeFile": "c.pdf", "Path": "/other/c.pdf", "Dimensione": "1000", "Data": ""},
+    ]
+    chunk_path = _make_s3_chunk(tmp_path, "chunk.csv", s3_rows)
+
+    _, _, size_libretto = analyze_s3_with_size([chunk_path], set(), 3)
+
+    assert size_libretto == pytest.approx(5000.0)
+
+
+def test_libretto_pattern_matches():
+    import re
+    pat = re.compile(LIBRETTO_PATTERN, re.IGNORECASE)
+    assert pat.search("/libretto/doc.pdf")
+    assert pat.search("/Libretto/doc.pdf")
+    assert pat.search("/LIBRETTO/doc.pdf")
+    assert pat.search("/libretti/doc.pdf")
+    assert pat.search("/Libretti/doc.pdf")
+    assert pat.search("/LIBRETTI/doc.pdf")
+    assert not pat.search("/docs/other.pdf")
 
 
 def test_analyze_s3_with_size_no_solo(tmp_path):

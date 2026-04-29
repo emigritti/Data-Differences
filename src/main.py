@@ -189,6 +189,9 @@ def analyze_alfresco_to_s3_with_size(
     )
 
 
+LIBRETTO_PATTERN = r"librett[oi]"
+
+
 def analyze_s3_with_size(
     chunk_paths: list[Path],
     all_alfresco_names: set[str],
@@ -198,7 +201,7 @@ def analyze_s3_with_size(
     Returns (n_solo_s3, size_solo_s3_bytes, size_libretto_bytes).
 
     - solo S3: items in S3 not found in any Alfresco file
-    - libretto: all S3 items whose Path contains the folder 'libretto'
+    - libretto/libretti: all S3 items whose Path matches 'librett[oi]' (case-insensitive)
     """
     print(f"\n[STEP S3-SIZE] Analisi S3 con pesi ({len(all_alfresco_names):,} nomi Alfresco unici)...")
 
@@ -214,12 +217,12 @@ def analyze_s3_with_size(
         n_solo_s3 += int(mask_solo.sum())
         size_solo_s3 += float(dim[mask_solo].sum())
 
-        mask_libretto = chunk["Path"].str.contains("libretto", case=False, na=False)
+        mask_libretto = chunk["Path"].str.contains(LIBRETTO_PATTERN, case=False, na=False, regex=True)
         size_libretto += float(dim[mask_libretto].sum())
 
     pct = n_solo_s3 / n_s3_total * 100 if n_s3_total else 0
     print(f"  → Solo S3: {n_solo_s3:,} ({pct:.1f}%, {_fmt_bytes(size_solo_s3)})")
-    print(f"  → Libretto (path): {_fmt_bytes(size_libretto)}")
+    print(f"  → Libretto/Libretti (path): {_fmt_bytes(size_libretto)}")
 
     return n_solo_s3, size_solo_s3, size_libretto
 
@@ -440,7 +443,7 @@ def _write_diff_size_report(
         f"| Totale item S3 | {n_s3_total:,} | — |",
         f"| Presenti in almeno un file Alfresco | {n_s3_total - n_solo_s3:,} | — |",
         f"| Solo S3 (non in nessun Alfresco) | {n_solo_s3:,} | {_fmt_bytes(size_solo_s3_bytes)} |",
-        f"| Path contiene cartella **libretto** | — | {_fmt_bytes(size_libretto_bytes)} |",
+        f"| Path contiene cartella **libretto/libretti** | — | {_fmt_bytes(size_libretto_bytes)} |",
         "",
         "---",
         "",
@@ -451,12 +454,75 @@ def _write_diff_size_report(
         f"| Alfresco (tutti) | {total_alf_items:,} | {_fmt_bytes(total_alf_size)} |",
         f"| Solo S3 (non in Alfresco) | {n_solo_s3:,} | {_fmt_bytes(size_solo_s3_bytes)} |",
         f"| **Totale complessivo** | **{grand_total_items:,}** | **{_fmt_bytes(grand_total_size)}** |",
-        f"| *(di cui libretto in S3)* | *—* | *{_fmt_bytes(size_libretto_bytes)}* |",
+        f"| *(di cui libretto/libretti in S3)* | *—* | *{_fmt_bytes(size_libretto_bytes)}* |",
         "",
     ]
 
     report_path.write_text("\n".join(lines), encoding="utf-8")
     print(f"\n  → Report Diff+Size: {report_path.name}")
+
+
+# ---------------------------------------------------------------------------
+# diff-size console recap
+# ---------------------------------------------------------------------------
+
+def _print_diff_size_recap(
+    alf_results: list[AlfrescoSizeResult],
+    n_s3_total: int,
+    n_solo_s3: int,
+    size_solo_s3_bytes: float,
+    size_libretto_bytes: float,
+) -> None:
+    W = 64
+    sep = "─" * W
+
+    total_alf_items = sum(r.n_alfresco for r in alf_results)
+    total_in_s3 = sum(r.n_in_s3 for r in alf_results)
+    total_solo_alf = sum(r.n_solo_alf for r in alf_results)
+    total_size_in_s3 = sum(r.size_in_s3_bytes for r in alf_results)
+    total_size_solo_alf = sum(r.size_solo_alf_bytes for r in alf_results)
+    total_alf_size = total_size_in_s3 + total_size_solo_alf
+    grand_total_items = total_alf_items + n_solo_s3
+    grand_total_size = total_alf_size + size_solo_s3_bytes
+
+    def row(label: str, count: str, size: str) -> str:
+        return f"  {label:<30} {count:>10}   {size:>14}"
+
+    print(f"\n{'═' * W}")
+    print(f"  {'RECAP  —  Diff + Dimensioni':^{W - 2}}")
+    print(f"{'═' * W}")
+
+    # --- Alfresco per file ---
+    print(f"\n  {'ALFRESCO → S3':}")
+    print(f"  {sep}")
+    print(row("File", "Item", "Dimensione"))
+    print(f"  {sep}")
+    for r in alf_results:
+        print(row(
+            f"  {r.stem}.csv",
+            f"{r.n_alfresco:,}",
+            _fmt_bytes(r.size_in_s3_bytes + r.size_solo_alf_bytes),
+        ))
+        print(row(f"    ↳ presenti in S3", f"{r.n_in_s3:,}", _fmt_bytes(r.size_in_s3_bytes)))
+        print(row(f"    ↳ solo Alfresco",  f"{r.n_solo_alf:,}", _fmt_bytes(r.size_solo_alf_bytes)))
+    print(f"  {sep}")
+    print(row("  Totale Alfresco", f"{total_alf_items:,}", _fmt_bytes(total_alf_size)))
+    print(row("    ↳ presenti in S3", f"{total_in_s3:,}", _fmt_bytes(total_size_in_s3)))
+    print(row("    ↳ solo Alfresco",  f"{total_solo_alf:,}", _fmt_bytes(total_size_solo_alf)))
+
+    # --- S3 ---
+    print(f"\n  {'S3 → ALFRESCO':}")
+    print(f"  {sep}")
+    print(row("  Totale S3", f"{n_s3_total:,}", "—"))
+    print(row("  Presenti in Alfresco", f"{n_s3_total - n_solo_s3:,}", "—"))
+    print(row("  Solo S3", f"{n_solo_s3:,}", _fmt_bytes(size_solo_s3_bytes)))
+    print(row("  Libretto/Libretti (path)", "—", _fmt_bytes(size_libretto_bytes)))
+
+    # --- Grand total ---
+    print(f"\n  {sep}")
+    print(row("  TOTALE COMPLESSIVO", f"{grand_total_items:,}", _fmt_bytes(grand_total_size)))
+    print(f"  {sep}")
+    print(f"{'═' * W}\n")
 
 
 # ---------------------------------------------------------------------------
@@ -575,12 +641,17 @@ def cmd_diff_size() -> None:
             size_solo_s3_bytes=size_solo_s3,
             size_libretto_bytes=size_libretto,
         )
+        _print_diff_size_recap(
+            alf_results=alf_results,
+            n_s3_total=n_s3_total,
+            n_solo_s3=n_solo_s3,
+            size_solo_s3_bytes=size_solo_s3,
+            size_libretto_bytes=size_libretto,
+        )
     finally:
         cleanup_tmp()
 
-    print(f"\n{'=' * 60}")
-    print("  Elaborazione completata.")
-    print(f"  Report salvati in: {OUTPUT_DIR}")
+    print(f"  Report salvato in: {OUTPUT_DIR}")
     print("=" * 60)
 
 
